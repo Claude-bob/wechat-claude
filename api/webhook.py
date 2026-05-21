@@ -269,7 +269,7 @@ def _chat(user_msg: str) -> str:
         )
         return resp.content[0].text
     except Exception as exc:
-        # Don't leak internal details to the user
+        _log("POST", "api_error", str(exc)[:200])
         return "哎呀刚才走神了😅 再说一遍？"
 
 
