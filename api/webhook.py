@@ -9,6 +9,24 @@ import socket
 import xml.etree.ElementTree as ET
 
 from flask import Flask, request, Response
+from datetime import datetime, timezone, timedelta
+
+tz_cn = timezone(timedelta(hours=8))
+
+# Simple request log
+_request_log: list[dict] = []
+
+
+def _log(method: str, status: str, detail: str = "") -> None:
+    _request_log.append({
+        "time": datetime.now(tz_cn).strftime("%H:%M:%S"),
+        "method": method,
+        "status": status,
+        "detail": detail,
+    })
+    if len(_request_log) > 50:
+        _request_log.pop(0)
+
 
 # Conditional import: try the real crypto lib first, fall back to hashlib shim
 try:
@@ -164,6 +182,7 @@ def webhook():
 # GET — URL verification
 # ---------------------------------------------------------------------------
 def _handle_verify():
+    _log("GET", "verify", "WeChat callback URL verification")
     wxcpt = _get_crypt()
     plain, code = wxcpt.verify_url(
         request.args.get("msg_signature", ""),
@@ -172,6 +191,7 @@ def _handle_verify():
         request.args.get("echostr", ""),
     )
     if code != 0:
+        _log("GET", "verify_fail", "signature mismatch")
         return "verify failed", 403
     return Response(plain, mimetype="text/plain")
 
@@ -179,6 +199,7 @@ def _handle_verify():
 # POST — receive & reply
 # ---------------------------------------------------------------------------
 def _handle_message():
+    _log("POST", "received")
     try:
         wxcpt = _get_crypt()
         raw_body = request.get_data(as_text=True) or ""
@@ -189,21 +210,26 @@ def _handle_message():
             raw_body,
         )
         if code != 0:
+            _log("POST", "decrypt_fail", f"code={code}")
             return "decrypt failed", 403
 
         root     = ET.fromstring(plain_xml)
         msg_type = root.find("MsgType")
         if msg_type is None:
+            _log("POST", "no_msgtype")
             return "success"
 
         msg_type = msg_type.text
         from_user = root.find("FromUserName").text
         to_user   = root.find("ToUserName").text
+        _log("POST", f"msg_{msg_type}", f"from={from_user}")
 
         # --- Text message ---
         if msg_type == "text":
             content = root.find("Content").text or ""
-            reply   = _chat(content)
+            _log("POST", "calling_claude", content[:80])
+            reply = _chat(content)
+            _log("POST", "reply", reply[:80])
             return _reply_xml(wxcpt, from_user, to_user, reply, request.args.get("nonce", ""))
 
         # --- Event (subscribe / enter chat) ---
@@ -220,6 +246,7 @@ def _handle_message():
         return "success"
     except Exception:
         import traceback
+        _log("POST", "error", traceback.format_exc()[:200])
         traceback.print_exc()
         return "success"
 
@@ -274,6 +301,7 @@ def health():
         "token_configured": bool(WECHAT_TOKEN),
         "aes_key_configured": bool(WECHAT_ENCODING_AES),
         "api_key_configured": bool(ANTHROPIC_API_KEY) and len(ANTHROPIC_API_KEY) > 10,
+        "recent_requests": _request_log[-20:],
     }
 
 # ---------------------------------------------------------------------------
