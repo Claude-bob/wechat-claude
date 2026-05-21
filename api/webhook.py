@@ -36,9 +36,9 @@ except ImportError:
     raise ImportError("pycryptodome is required: pip install pycryptodome")
 
 try:
-    import anthropic
+    from openai import OpenAI as _OpenAI
 except ImportError:
-    raise ImportError("anthropic SDK is required: pip install anthropic")
+    raise ImportError("openai SDK is required: pip install openai")
 
 # ---------------------------------------------------------------------------
 # Flask app
@@ -153,9 +153,12 @@ class WXBizMsgCrypt:
         return base64.b64encode(cipher.encrypt(plain)).decode()
 
 # ---------------------------------------------------------------------------
-# Anthropic client
+# MiMo API client (OpenAI-compatible)
 # ---------------------------------------------------------------------------
-claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+mimo = _OpenAI(
+    api_key=ANTHROPIC_API_KEY,
+    base_url="https://api.xiaomimimo.com/v1",
+)
 
 SYSTEM_PROMPT = """\
 你是一个正在通过企业微信和朋友聊天的AI助手。回复要求：
@@ -258,16 +261,18 @@ def _get_crypt() -> WXBizMsgCrypt:
 
 
 def _chat(user_msg: str) -> str:
-    """Call Claude and return the assistant's reply text."""
+    """Call MiMo and return the assistant's reply text."""
     try:
-        resp = claude.messages.create(
-            model="claude-sonnet-4-6",
+        resp = mimo.chat.completions.create(
+            model="mimo-v2-pro",
             max_tokens=600,
             temperature=0.85,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_msg}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
         )
-        return resp.content[0].text
+        return resp.choices[0].message.content or ""
     except Exception as exc:
         _log("POST", "api_error", str(exc)[:200])
         return "哎呀刚才走神了😅 再说一遍？"
