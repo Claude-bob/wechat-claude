@@ -179,43 +179,49 @@ def _handle_verify():
 # POST — receive & reply
 # ---------------------------------------------------------------------------
 def _handle_message():
-    wxcpt = _get_crypt()
-    plain_xml, code = wxcpt.decrypt_msg(
-        request.args.get("msg_signature", ""),
-        request.args.get("timestamp", ""),
-        request.args.get("nonce", ""),
-        request.data.decode("utf-8"),
-    )
-    if code != 0:
-        return "decrypt failed", 403
+    try:
+        wxcpt = _get_crypt()
+        raw_body = request.get_data(as_text=True) or ""
+        plain_xml, code = wxcpt.decrypt_msg(
+            request.args.get("msg_signature", ""),
+            request.args.get("timestamp", ""),
+            request.args.get("nonce", ""),
+            raw_body,
+        )
+        if code != 0:
+            return "decrypt failed", 403
 
-    root     = ET.fromstring(plain_xml)
-    msg_type = root.find("MsgType")
-    if msg_type is None:
+        root     = ET.fromstring(plain_xml)
+        msg_type = root.find("MsgType")
+        if msg_type is None:
+            return "success"
+
+        msg_type = msg_type.text
+        from_user = root.find("FromUserName").text
+        to_user   = root.find("ToUserName").text
+
+        # --- Text message ---
+        if msg_type == "text":
+            content = root.find("Content").text or ""
+            reply   = _chat(content)
+            return _reply_xml(wxcpt, from_user, to_user, reply, request.args.get("nonce", ""))
+
+        # --- Event (subscribe / enter chat) ---
+        if msg_type == "event":
+            event = root.find("Event")
+            if event is not None and event.text == "subscribe":
+                return _reply_xml(
+                    wxcpt, from_user, to_user,
+                    "嗨！终于等到你了~ 😊\n我是你的AI聊天伙伴，随便聊什么都可以，我会认真倾听和回应。",
+                    request.args.get("nonce", ""),
+                )
+
+        # For other message types, return empty success (no reply)
         return "success"
-
-    msg_type = msg_type.text
-    from_user = root.find("FromUserName").text
-    to_user   = root.find("ToUserName").text
-
-    # --- Text message ---
-    if msg_type == "text":
-        content = root.find("Content").text or ""
-        reply   = _chat(content)
-        return _reply_xml(wxcpt, from_user, to_user, reply, request.args.get("nonce", ""))
-
-    # --- Event (subscribe / enter chat) ---
-    if msg_type == "event":
-        event = root.find("Event")
-        if event is not None and event.text == "subscribe":
-            return _reply_xml(
-                wxcpt, from_user, to_user,
-                "嗨！终于等到你了~ 😊\n我是你的AI聊天伙伴，随便聊什么都可以，我会认真倾听和回应。",
-                request.args.get("nonce", ""),
-            )
-
-    # For other message types, return empty success (no reply)
-    return "success"
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return "success"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -254,6 +260,21 @@ def _reply_xml(wxcpt: WXBizMsgCrypt, to_user: str, from_user: str,
     )
     encrypted = wxcpt.encrypt_msg(plain, nonce)
     return Response(encrypted, mimetype="application/xml")
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+@app.route("/", methods=["GET"])
+def health():
+    import sys
+    return {
+        "status": "ok",
+        "python": sys.version,
+        "corp_id_configured": bool(WECHAT_CORP_ID),
+        "token_configured": bool(WECHAT_TOKEN),
+        "aes_key_configured": bool(WECHAT_ENCODING_AES),
+        "api_key_configured": bool(ANTHROPIC_API_KEY) and len(ANTHROPIC_API_KEY) > 10,
+    }
 
 # ---------------------------------------------------------------------------
 # Ensure a clean name for Vercel's dev server / logging
