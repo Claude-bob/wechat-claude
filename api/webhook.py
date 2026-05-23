@@ -264,8 +264,8 @@ def _chat(user_msg: str) -> str:
     """Call MiMo and return the assistant's reply text."""
     try:
         resp = mimo.chat.completions.create(
-            model="mimo-v2-pro",
-            max_tokens=600,
+            model="mimo-v2-flash",
+            max_tokens=300,
             temperature=0.85,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
